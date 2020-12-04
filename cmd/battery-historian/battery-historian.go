@@ -18,6 +18,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"path"
@@ -26,8 +27,11 @@ import (
 )
 
 var (
-	optimized = flag.Bool("optimized", true, "Whether to output optimized js files. Disable for local debugging.")
-	port      = flag.Int("port", 9999, "service port")
+	optimized  = flag.Bool("optimized", true, "Whether to output optimized js files. Disable for local debugging.")
+	port       = flag.Int("port", 9999, "service port")
+	inputFile  = flag.String("input_file", "", "bugreport (zip) to analyze")
+	outputPath = flag.String("output_dir", "", "path for output csv")
+	process    = flag.String("process", "", "Process to monitor")
 
 	compiledDir   = flag.String("compiled_dir", "./compiled", "Directory containing compiled js file for Historian v2.")
 	jsDir         = flag.String("js_dir", "./js", "Directory containing uncompiled js files for Historian v2.")
@@ -115,11 +119,20 @@ func initFrontend() {
 func main() {
 	flag.Parse()
 
-	initFrontend()
+	//initFrontend()
 	analyzer.InitTemplates(*templateDir)
 	analyzer.SetScriptsDir(*scriptsDir)
 	analyzer.SetResVersion(*resVersion)
 	analyzer.SetIsOptimized(*optimized)
-	log.Println("Listening on port: ", *port)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
+	//log.Println("Listening on port: ", *port)
+	//log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
+
+	data, err := ioutil.ReadFile(*inputFile)
+	if err != nil {
+		fmt.Println("File reading error", err)
+		return
+	}
+	fmt.Println(*inputFile)
+	pd := &(analyzer.ParsedData{})
+	pd.ParseBugReport(*inputFile, string(data), "", "", *outputPath, *process)
 }

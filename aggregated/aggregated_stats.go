@@ -178,6 +178,8 @@ type PowerUseData struct {
 	Percent float32 // Percentage of total consumption
 }
 
+// Interesting
+
 // byPercent sorts applications by percentage battery used.
 type byPercent []*PowerUseData
 

@@ -16,6 +16,7 @@
 package analyzer
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -201,6 +202,7 @@ func (pd *ParsedData) Cleanup() {
 	}
 }
 
+//
 // SendAsJSON creates and sends the HTML output and json response from the ParsedData.
 func (pd *ParsedData) SendAsJSON(w http.ResponseWriter, r *http.Request) {
 	if err := pd.processKernelTrace(); err != nil {
@@ -559,7 +561,7 @@ func (pd *ParsedData) AnalyzeFiles(files map[string]UploadedFile) error {
 
 	// Parse the bugreport.
 	fB2 := files[bugreport2FT]
-	if err := pd.parseBugReport(fB.FileName, string(fB.Contents), fB2.FileName, string(fB2.Contents)); err != nil {
+	if err := pd.ParseBugReport(fB.FileName, string(fB.Contents), fB2.FileName, string(fB2.Contents), "", ""); err != nil {
 		return fmt.Errorf("error parsing bugreport: %v", err)
 	}
 	// Write the bug report to a file in case we need it to process a kernel trace file.
@@ -652,11 +654,11 @@ func writeTempFile(contents string) (string, error) {
 	return tmpFile.Name(), nil
 }
 
-// parseBugReport analyzes the given bug report contents, and updates the ParsedData object.
+// ParseBugReport analyzes the given bug report contents, and updates the ParsedData object.
 // contentsB is an optional second bug report. If it's given and the Android IDs and batterystats
 // checkin start times are the same, a diff of the checkins will be saved, otherwise, they will be
 // saved as separate reports.
-func (pd *ParsedData) parseBugReport(fnameA, contentsA, fnameB, contentsB string) error {
+func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outputPath, processName string) error {
 
 	doActivity := func(ch chan activity.LogsData, contents string, pkgs []*usagepb.PackageInfo) {
 		ch <- activity.Parse(pkgs, contents)
@@ -905,6 +907,34 @@ func (pd *ParsedData) parseBugReport(fnameA, contentsA, fnameB, contentsB string
 				CSV:    broadcastsOutput.csv,
 			},
 		}
+
+		fileSys, err := os.Create(outputPath + "device_report.csv")
+		if err != nil {
+			fmt.Println(err)
+			fileSys.Close()
+			return
+		}
+
+		scanner := bufio.NewScanner(strings.NewReader(summariesOutput.historianV2CSV))
+		line := ""
+		for scanner.Scan() {
+			line = scanner.Text()
+			fmt.Println(line)
+			if strings.Contains(line, "Coulomb charge") || strings.Contains(line, "Voltage") {
+				fmt.Fprintln(fileSys, line)
+				if err != nil {
+					fmt.Println(err)
+					return
+				}
+			}
+		}
+		err = fileSys.Close()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Println("DeviceFile written successfully")
+
 		for s, l := range activityManagerOutput.Logs {
 			if l == nil {
 				log.Print("Nil logcat log received")
@@ -951,6 +981,40 @@ func (pd *ParsedData) parseBugReport(fnameA, contentsA, fnameB, contentsB string
 			OverflowMs:      summariesOutput.overflowMs,
 			IsDiff:          diff,
 		})
+
+		fileApp, err := os.Create(outputPath + "app_report.csv")
+		if err != nil {
+			fmt.Println(err)
+			fileApp.Close()
+			return
+		}
+
+		fmt.Fprintln(fileApp, "Estimated Battery Capacity (mAh),", bsStats.GetSystem().GetBattery().GetEstimatedBatteryCapacityMah())
+		fmt.Fprintln(fileApp, "PowerUse Battery Capacity (=Declared?) (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetBatteryCapacityMah())
+		fmt.Fprintln(fileApp, "Device Battery Discharge (mAh),", bsStats.GetSystem().GetBatteryDischarge().GetTotalMah())
+		fmt.Fprintln(fileApp, "PowerUse Battery Consumption (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetComputedPowerMah())
+
+		for _, appStat := range data.AppStats {
+			if *appStat.RawStats.Name == processName {
+				fmt.Fprintln(fileApp, "App cpu power estimation (mAh),", (appStat.RawStats.GetCpu().GetPowerMaMs() / (1000 * 60 * 60))) // DevicePowerPrediction and CPUPowerPrediction
+				fmt.Fprintln(fileApp, "App total power estimation (mAh),", appStat.RawStats.GetPowerUseItem().GetComputedPowerMah())
+				fmt.Fprintln(fileApp, "App cpu power estimation (%),", appStat.CPUPowerPrediction)
+				fmt.Fprintln(fileApp, "App total power estimation (%),", appStat.DevicePowerPrediction)
+				if err != nil {
+					fmt.Println(err)
+					return
+				}
+				break
+			}
+		}
+		err = fileApp.Close()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Println("AppFile written successfully")
+		return
+
 		pd.data = append(pd.data, data)
 
 		if diff {
