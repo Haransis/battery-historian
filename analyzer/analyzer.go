@@ -170,49 +170,6 @@ func SetResVersion(v int) {
 	resVersion = v
 }
 
-// extractHistogramStats retrieves the data needed to draw the histogram charts.
-func extractHistogramStats(data presenter.HTMLData) presenter.HistogramStats {
-	return presenter.HistogramStats{
-		ScreenOffDischargeRatePerHr:         data.CheckinSummary.ScreenOffDischargeRatePerHr,
-		ScreenOnDischargeRatePerHr:          data.CheckinSummary.ScreenOnDischargeRatePerHr,
-		ScreenOffUptimePercentage:           data.CheckinSummary.ScreenOffUptimePercentage,
-		ScreenOnTimePercentage:              data.CheckinSummary.ScreenOnTimePercentage,
-		PartialWakelockTimePercentage:       data.CheckinSummary.PartialWakelockTimePercentage,
-		KernelOverheadTimePercentage:        data.CheckinSummary.KernelOverheadTimePercentage,
-		SignalScanningTimePercentage:        data.CheckinSummary.SignalScanningTimePercentage,
-		MobileActiveTimePercentage:          data.CheckinSummary.MobileActiveTimePercentage,
-		MobileKiloBytesPerHr:                data.CheckinSummary.MobileKiloBytesPerHr,
-		WifiKiloBytesPerHr:                  data.CheckinSummary.WifiKiloBytesPerHr,
-		PhoneCallTimePercentage:             data.CheckinSummary.PhoneCallTimePercentage,
-		DeviceIdlingTimePercentage:          data.CheckinSummary.DeviceIdlingTimePercentage,
-		FullWakelockTimePercentage:          data.CheckinSummary.FullWakelockTimePercentage,
-		InteractiveTimePercentage:           data.CheckinSummary.InteractiveTimePercentage,
-		DeviceIdleModeEnabledTimePercentage: data.CheckinSummary.DeviceIdleModeEnabledTimePercentage,
-		TotalAppGPSUseTimePerHour:           data.CheckinSummary.TotalAppGPSUseTimePerHour,
-		BluetoothOnTimePercentage:           data.CheckinSummary.BluetoothOnTimePercentage,
-		LowPowerModeEnabledTimePercentage:   data.CheckinSummary.LowPowerModeEnabledTimePercentage,
-		TotalAppANRCount:                    data.CheckinSummary.TotalAppANRCount,
-		TotalAppCrashCount:                  data.CheckinSummary.TotalAppCrashCount,
-		WifiDischargeRatePerHr:              data.CheckinSummary.WifiDischargeRatePerHr,
-		BluetoothDischargeRatePerHr:         data.CheckinSummary.BluetoothDischargeRatePerHr,
-		ModemDischargeRatePerHr:             data.CheckinSummary.ModemDischargeRatePerHr,
-		WifiOnTimePercentage:                data.CheckinSummary.WifiOnTimePercentage,
-		WifiTransferTimePercentage:          data.CheckinSummary.WifiTransferTimePercentage,
-		BluetoothTransferTimePercentage:     data.CheckinSummary.BluetoothTransferTimePercentage,
-		ModemTransferTimePercentage:         data.CheckinSummary.ModemTransferTimePercentage,
-		TotalAppSyncsPerHr:                  data.CheckinSummary.TotalAppSyncsPerHr,
-		TotalAppWakeupsPerHr:                data.CheckinSummary.TotalAppWakeupsPerHr,
-		TotalAppCPUPowerPct:                 data.CheckinSummary.TotalAppCPUPowerPct,
-		TotalAppFlashlightUsePerHr:          data.CheckinSummary.TotalAppFlashlightUsePerHr,
-		TotalAppCameraUsePerHr:              data.CheckinSummary.TotalAppCameraUsePerHr,
-		ScreenBrightness:                    data.CheckinSummary.ScreenBrightness,
-		SignalStrength:                      data.CheckinSummary.SignalStrength,
-		WifiSignalStrength:                  data.CheckinSummary.WifiSignalStrength,
-		BluetoothState:                      data.CheckinSummary.BluetoothState,
-		DataConnection:                      data.CheckinSummary.DataConnection,
-	}
-}
-
 // writeTempFile writes the contents to a temporary file.
 func writeTempFile(contents string) (string, error) {
 	tmpFile, err := ioutil.TempFile("", "historian")
@@ -476,7 +433,6 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 		fmt.Println("AppFile written successfully")
 		return
 
-		log.Printf("Trace finished analyzing %q file.", brDA.fileName)
 	}
 
 	newBrData := func(fName, contents string) (*brData, error) {
