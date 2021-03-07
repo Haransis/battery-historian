@@ -21,10 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"path"
 	"regexp"
@@ -147,39 +145,11 @@ type checkinData struct {
 	err          []error
 }
 
-// ParsedData holds the extracted details from the parsing of each file.
-type ParsedData struct {
-	// The kernel trace file needs to be processed with a bug report, so we save the file names here to be processed after reading in all the files.
-	bugReport string
-	// Error if bugreport could not be saved.
-	brSaveErr   error
-	kernelTrace string
-	// Error if kernel trace file could not be saved.
-	kernelSaveErr error
-	deviceType    string
-
-	responseArr []uploadResponse
-	kd          *csvData
-	md          *csvData
-	data        []presenter.HTMLData
-}
-
 // BatteryStatsInfo holds the extracted batterystats details for a bugreport.
 type BatteryStatsInfo struct {
 	Filename string
 	Stats    *bspb.BatteryStats
 	Meta     *bugreportutils.MetaInfo
-}
-
-// Cleanup removes all temporary files written by the ParsedData analyzer.
-// Should be called after ParsedData is no longer needed.
-func (pd *ParsedData) Cleanup() {
-	if pd.bugReport != "" {
-		os.Remove(pd.bugReport)
-	}
-	if pd.kernelTrace != "" {
-		os.Remove(pd.kernelTrace)
-	}
 }
 
 // scriptsPath expands the script filename into a full resource path for the script.
@@ -198,42 +168,6 @@ func SetScriptsDir(dir string) {
 // SetResVersion sets the current version to force reloading of JS and CSS files.
 func SetResVersion(v int) {
 	resVersion = v
-}
-
-// SetIsOptimized sets whether the JS will be optimized.
-func SetIsOptimized(optimized bool) {
-	isOptimizedJs = optimized
-}
-
-// closeConnection closes the http connection and writes a response.
-func closeConnection(w http.ResponseWriter, s string) {
-	if flusher, ok := w.(http.Flusher); ok {
-		w.Header().Set("Connection", "close")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(s)))
-		w.WriteHeader(http.StatusExpectationFailed)
-		io.WriteString(w, s)
-		flusher.Flush()
-	}
-	log.Println(s, " Closing connection.")
-	conn, _, _ := w.(http.Hijacker).Hijack()
-	conn.Close()
-}
-
-// UploadHandler serves the upload html page.
-func UploadHandler(w http.ResponseWriter, r *http.Request) {
-	// If false, the upload template will load closure and js files in the header.
-	uploadData := struct {
-		IsOptimizedJs bool
-		ResVersion    int
-	}{
-		isOptimizedJs,
-		resVersion,
-	}
-
-	if err := uploadTempl.Execute(w, uploadData); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 }
 
 // extractHistogramStats retrieves the data needed to draw the histogram charts.
@@ -297,7 +231,7 @@ func writeTempFile(contents string) (string, error) {
 // contentsB is an optional second bug report. If it's given and the Android IDs and batterystats
 // checkin start times are the same, a diff of the checkins will be saved, otherwise, they will be
 // saved as separate reports.
-func (pd *ParsedData) ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
+func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 
 	doActivity := func(ch chan activity.LogsData, contents string, pkgs []*usagepb.PackageInfo) {
 		ch <- activity.Parse(pkgs, contents)
@@ -317,8 +251,6 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, outputPath, processName 
 		stats, warnings, errs := checkinparse.ParseBatteryStats(&ctr, checkinparse.CreateBatteryReport(s), pkgs)
 		if stats == nil {
 			errs = append(errs, errors.New("could not parse aggregated battery stats"))
-		} else {
-			pd.deviceType = stats.GetBuild().GetDevice()
 		}
 		ch <- checkinData{stats, warnings, errs}
 		log.Printf("Trace finished processing checkin.")
@@ -394,19 +326,15 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, outputPath, processName 
 		var errs []error
 		supV := late.meta.SdkVersion >= minSupportedSDK && (!diff || earl.meta.SdkVersion >= minSupportedSDK)
 
-		ce := ""
-
 		// Only need to generate it for the later report.
 		go doHistorian(historianCh, late.fileName, late.contents)
 		if !supV {
-			ce = "Unsupported bug report version."
 			errs = append(errs, errors.New("unsupported bug report version"))
 		} else {
 			// No point running these if we don't support the sdk version since we won't get any data from them.
 
 			bsL := bugreportutils.ExtractBatterystatsCheckin(late.contents)
 			if strings.Contains(bsL, "Exception occurred while dumping") {
-				ce = "Exception found in battery dump."
 				errs = append(errs, errors.New("exception found in battery dump"))
 			}
 
@@ -427,7 +355,7 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, outputPath, processName 
 			errs = append(errs, checkinL.err...)
 			warnings = append(warnings, checkinL.warnings...)
 			if checkinL.batterystats == nil || (checkinE.batterystats == nil) {
-				ce = "Could not parse aggregated battery stats."
+				errs = append(errs, errors.New("Could not parse aggregated battery stats."))
 			} else {
 				bsStats = checkinL.batterystats
 			}
@@ -532,25 +460,6 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, outputPath, processName 
 			})
 		}
 
-		var note string
-		pd.responseArr = append(pd.responseArr, uploadResponse{
-			SDKVersion:      data.SDKVersion,
-			HistorianV2Logs: historianV2Logs,
-			LevelSummaryCSV: summariesOutput.levelSummaryCSV,
-			ReportVersion:   data.CheckinSummary.ReportVersion,
-			AppStats:        data.AppStats,
-			BatteryStats:    bsStats,
-			DeviceCapacity:  bsStats.GetSystem().GetPowerUseSummary().GetBatteryCapacityMah(),
-			HistogramStats:  extractHistogramStats(data),
-			TimeToDelta:     summariesOutput.timeToDelta,
-			CriticalError:   ce,
-			Note:            note,
-			FileName:        data.Filename,
-			Location:        late.dt.Location().String(),
-			OverflowMs:      summariesOutput.overflowMs,
-			IsDiff:          false,
-		})
-
 		fileApp, err := os.Create(outputPath + "summary.csv")
 		if err != nil {
 			fmt.Println(err)
@@ -588,8 +497,6 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, outputPath, processName 
 		}
 		fmt.Println("AppFile written successfully")
 		return
-
-		pd.data = append(pd.data, data)
 
 		log.Printf("Trace finished analyzing %q file.", brDA.fileName)
 	}
