@@ -41,7 +41,6 @@ import (
 	"github.com/google/battery-historian/checkinutil"
 	"github.com/google/battery-historian/dmesg"
 	"github.com/google/battery-historian/historianutils"
-	"github.com/google/battery-historian/kernel"
 	"github.com/google/battery-historian/packageutils"
 	"github.com/google/battery-historian/parseutils"
 	"github.com/google/battery-historian/powermonitor"
@@ -203,10 +202,6 @@ func (pd *ParsedData) Cleanup() {
 //
 // SendAsJSON creates and sends the HTML output and json response from the ParsedData.
 func (pd *ParsedData) SendAsJSON(w http.ResponseWriter, r *http.Request) {
-	if err := pd.processKernelTrace(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	// Append any parsed kernel or power monitor CSVs to the Historian V2 CSV.
 	if err := pd.appendCSVs(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -260,30 +255,6 @@ func (pd *ParsedData) SendAsJSON(w http.ResponseWriter, r *http.Request) {
 	w.Write(unzipped)
 }
 
-// processKernelTrace converts the kernel trace file with a bug report into a Historian parseable format, and then parses the result into a CSV.
-func (pd *ParsedData) processKernelTrace() error {
-	// No kernel trace file to process.
-	if pd.kernelTrace == "" {
-		return nil
-	}
-	if pd.bugReport == "" {
-		return errors.New("no bug report found for the provided kernel trace file")
-	}
-	if !kernel.IsSupportedDevice(pd.deviceType) {
-		return fmt.Errorf("device %v not supported for kernel trace file parsing", pd.deviceType)
-	}
-	// Call the python script to convert the trace file into a Historian parseable format.
-	csv, err := generateKernelCSV(pd.bugReport, pd.kernelTrace, pd.deviceType)
-	if strings.TrimSpace(csv) == "" {
-		return errors.New("no CSV output was generated from the kernel trace file")
-	}
-	if err != nil {
-		return err
-	}
-	// Parse the file as a kernel wakesource trace file.
-	return pd.parseKernelFile(pd.kernelTrace, csv)
-}
-
 // Data returns the data field from ParsedData
 func (pd *ParsedData) Data() []presenter.HTMLData {
 	return pd.data
@@ -316,16 +287,6 @@ func (pd *ParsedData) appendCSVs() error {
 		pd.data[0].Error += historianutils.ErrorsToString(pd.md.errs)
 	}
 	return nil
-}
-
-// parseKernelFile processes the kernel file and stores the result in the ParsedData.
-func (pd *ParsedData) parseKernelFile(fname, contents string) error {
-	// Try to parse the file as a kernel file.
-	if valid, output, extraErrs := kernel.Parse(contents); valid {
-		pd.kd = &csvData{output, extraErrs}
-		return nil
-	}
-	return fmt.Errorf("%v: invalid kernel wakesource trace file", fname)
 }
 
 // parsePowerMonitorFile processes the power monitor file and stores the result in the ParsedData.
@@ -446,61 +407,6 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-}
-
-// AnalyzeAndResponse analyzes the uploaded files and sends the HTTP response in JSON.
-func AnalyzeAndResponse(w http.ResponseWriter, r *http.Request, files map[string]UploadedFile) {
-	pd := &ParsedData{}
-	defer pd.Cleanup()
-	if err := pd.AnalyzeFiles(files); err != nil {
-		http.Error(w, fmt.Sprintf("failed to analyze file: %v", err), http.StatusInternalServerError)
-		return
-	}
-	pd.SendAsJSON(w, r)
-}
-
-// AnalyzeFiles processes and analyzes the list of uploaded files.
-func (pd *ParsedData) AnalyzeFiles(files map[string]UploadedFile) error {
-	fB, okB := files[bugreportFT]
-	if !okB {
-		return errors.New("missing bugreport file")
-	}
-
-	// Parse the bugreport.
-	if err := pd.ParseBugReport(fB.FileName, string(fB.Contents), "", ""); err != nil {
-		return fmt.Errorf("error parsing bugreport: %v", err)
-	}
-	// Write the bug report to a file in case we need it to process a kernel trace file.
-	if len(pd.data) < numberOfFilesToCompare {
-		tmpFile, err := writeTempFile(string(fB.Contents))
-		if err != nil {
-			return fmt.Errorf("could not write bugreport: %v", err)
-		}
-		pd.bugReport = tmpFile
-	}
-	if file, ok := files[kernelFT]; ok {
-		if !kernel.IsTrace(file.Contents) {
-			return fmt.Errorf("invalid kernel trace file: %v", file.FileName)
-		}
-		if pd.kernelTrace != "" {
-			log.Printf("more than one kernel trace file found")
-		} else {
-			// Need bug report to process kernel trace file, so store the file for later processing.
-			tmpFile, err := writeTempFile(string(file.Contents))
-			if err != nil {
-				return fmt.Errorf("could not write kernel trace file: %v", err)
-			}
-			pd.kernelTrace = tmpFile
-		}
-	}
-	if file, ok := files[powerMonitorFT]; ok {
-		// Parse the power monitor file.
-		if err := pd.parsePowerMonitorFile(file.FileName, string(file.Contents)); err != nil {
-			return fmt.Errorf("error parsing power monitor file: %v", err)
-		}
-	}
-
-	return nil
 }
 
 // extractHistogramStats retrieves the data needed to draw the histogram charts.
@@ -919,11 +825,6 @@ func analyze(bugReport string, pkgs []*usagepb.PackageInfo) summariesData {
 // generateHistorianPlot calls the Historian python script to generate html charts.
 func generateHistorianPlot(reportName, filepath string) (string, error) {
 	return historianutils.RunCommand("python", scriptsPath(scriptsDir, "historian.py"), "-c", "-m", "-r", reportName, filepath)
-}
-
-// generateKernelCSV calls the python script to convert kernel trace files into a CSV format parseable by kernel.Parse.
-func generateKernelCSV(bugReportPath, tracePath, model string) (string, error) {
-	return historianutils.RunCommand("python", scriptsPath(scriptsDir, "kernel_trace.py"), "--bugreport", bugReportPath, "--trace", tracePath, "--device", model)
 }
 
 // batteryTime extracts the battery time info from a bug report.
