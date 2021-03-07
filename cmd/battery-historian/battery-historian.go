@@ -30,7 +30,6 @@ var (
 
 	compiledDir   = flag.String("compiled_dir", "./compiled", "Directory containing compiled js file for Historian v2.")
 	scriptsDir    = flag.String("scripts_dir", "./scripts", "Directory containing Historian and kernel trace Python scripts.")
-	staticDir     = flag.String("static_dir", "./static", "Directory containing static files.")
 	thirdPartyDir = flag.String("third_party_dir", "./third_party", "Directory containing third party files for Historian v2.")
 
 	// resVersion should be incremented whenever the JS or CSS files are modified.
@@ -41,14 +40,6 @@ func compiledPath() string {
 	dir := *compiledDir
 	if dir == "" {
 		dir = "./compiled"
-	}
-	return dir
-}
-
-func staticPath() string {
-	dir := *staticDir
-	if dir == "" {
-		dir = "./static"
 	}
 	return dir
 }
