@@ -126,8 +126,8 @@ func main() {
 	analyzer.SetIsOptimized(*optimized)
 	//log.Println("Listening on port: ", *port)
 	//log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
-
 	data, err := ioutil.ReadFile(*inputFile)
+	fmt.Println(*inputFile)
 	if err != nil {
 		fmt.Println("File reading error", err)
 		return

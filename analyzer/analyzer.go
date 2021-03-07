@@ -908,7 +908,7 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 			},
 		}
 
-		fileSys, err := os.Create(outputPath + "device_report.csv")
+		fileSys, err := os.Create(outputPath + "power_report.csv")
 		if err != nil {
 			fmt.Println(err)
 			fileSys.Close()
@@ -919,7 +919,6 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 		line := ""
 		for scanner.Scan() {
 			line = scanner.Text()
-			fmt.Println(line)
 			if strings.Contains(line, "Coulomb charge") || strings.Contains(line, "Voltage") {
 				fmt.Fprintln(fileSys, line)
 				if err != nil {
@@ -982,7 +981,7 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 			IsDiff:          diff,
 		})
 
-		fileApp, err := os.Create(outputPath + "app_report.csv")
+		fileApp, err := os.Create(outputPath + "summary.csv")
 		if err != nil {
 			fmt.Println(err)
 			fileApp.Close()
@@ -990,9 +989,14 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 		}
 
 		fmt.Fprintln(fileApp, "Estimated Battery Capacity (mAh),", bsStats.GetSystem().GetBattery().GetEstimatedBatteryCapacityMah())
-		fmt.Fprintln(fileApp, "PowerUse Battery Capacity (=Declared?) (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetBatteryCapacityMah())
-		fmt.Fprintln(fileApp, "Device Battery Discharge (mAh),", bsStats.GetSystem().GetBatteryDischarge().GetTotalMah())
-		fmt.Fprintln(fileApp, "PowerUse Battery Consumption (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetComputedPowerMah())
+		fmt.Fprintln(fileApp, "PowerUse Declared Battery Capacity (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetBatteryCapacityMah())
+		fmt.Fprintln(fileApp, "Device Battery Discharge (mAh),", bsStats.GetSystem().GetBatteryDischarge().GetTotalMah())             //If you follow the history
+		fmt.Fprintln(fileApp, "Device Battery Discharge lower bound (%),", bsStats.GetSystem().GetBatteryDischarge().GetLowerBound()) //Compared to declared capacity using below
+		fmt.Fprintln(fileApp, "Device Battery Discharge upper bound (%),", bsStats.GetSystem().GetBatteryDischarge().GetUpperBound()) //Compared to declared capacity using below
+		fmt.Fprintln(fileApp, "PowerUse lower bound (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetMinDrainedPowerMah())        //"actual"
+		fmt.Fprintln(fileApp, "PowerUse upper bound (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetMaxDrainedPowerMah())        //"actual"
+		fmt.Fprintln(fileApp, "PowerUse Battery Consumption (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetComputedPowerMah())  //Crazy high value
+		fmt.Fprintln(fileApp, "System poweruse item (all sources of consumption),", bsStats.GetSystem().GetPowerUseItem())            //Crazy high values
 
 		for _, appStat := range data.AppStats {
 			if *appStat.RawStats.Name == processName {
