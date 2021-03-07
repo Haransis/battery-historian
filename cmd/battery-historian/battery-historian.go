@@ -76,5 +76,5 @@ func main() {
 	}
 	fmt.Println(*inputFile)
 	pd := &(analyzer.ParsedData{})
-	pd.ParseBugReport(*inputFile, string(data), "", "", *outputPath, *process)
+	pd.ParseBugReport(*inputFile, string(data), *outputPath, *process)
 }

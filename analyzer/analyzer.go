@@ -30,7 +30,6 @@ import (
 	"path"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -38,7 +37,6 @@ import (
 	"github.com/google/battery-historian/activity"
 	"github.com/google/battery-historian/broadcasts"
 	"github.com/google/battery-historian/bugreportutils"
-	"github.com/google/battery-historian/checkindelta"
 	"github.com/google/battery-historian/checkinparse"
 	"github.com/google/battery-historian/checkinutil"
 	"github.com/google/battery-historian/dmesg"
@@ -469,8 +467,7 @@ func (pd *ParsedData) AnalyzeFiles(files map[string]UploadedFile) error {
 	}
 
 	// Parse the bugreport.
-	fB2 := files[bugreport2FT]
-	if err := pd.ParseBugReport(fB.FileName, string(fB.Contents), fB2.FileName, string(fB2.Contents), "", ""); err != nil {
+	if err := pd.ParseBugReport(fB.FileName, string(fB.Contents), "", ""); err != nil {
 		return fmt.Errorf("error parsing bugreport: %v", err)
 	}
 	// Write the bug report to a file in case we need it to process a kernel trace file.
@@ -567,7 +564,7 @@ func writeTempFile(contents string) (string, error) {
 // contentsB is an optional second bug report. If it's given and the Android IDs and batterystats
 // checkin start times are the same, a diff of the checkins will be saved, otherwise, they will be
 // saved as separate reports.
-func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outputPath, processName string) error {
+func (pd *ParsedData) ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 
 	doActivity := func(ch chan activity.LogsData, contents string, pkgs []*usagepb.PackageInfo) {
 		ch <- activity.Parse(pkgs, contents)
@@ -635,64 +632,21 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 	}
 
 	// doParsing needs to be declared before its initialization so that it can call itself recursively.
-	var doParsing func(brDA, brDB *brData)
+	var doParsing func(brDA *brData)
 	// The earlier report will be subtracted from the later report.
-	doParsing = func(brDA, brDB *brData) {
-		if brDA == nil && brDB == nil {
+	doParsing = func(brDA *brData) {
+		if brDA == nil {
 			return
 		}
 		if brDA.fileName == "" || brDA.contents == "" {
 			return
 		}
 
-		// Check to see if we should do a stats diff of the two bug reports.
-		diff := brDA != nil && brDB != nil &&
-			// Requires that the second report's contents are not empty.
-			brDB.fileName != "" && brDB.contents != "" &&
-			// Android IDs must be the same.
-			brDA.meta.DeviceID == brDB.meta.DeviceID &&
-			// Batterystats start clock time must be the same.
-			brDA.bt != nil && brDB.bt != nil &&
-			brDA.bt.GetStartClockTimeMsec() == brDB.bt.GetStartClockTimeMsec()
+		diff := false
 		var earl, late *brData
-		if !diff {
-			if brDB != nil {
-				var wg sync.WaitGroup
-				// Need to parse each report separately.
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					doParsing(brDA, nil)
-				}()
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					doParsing(brDB, nil)
-				}()
-				wg.Wait()
-				return
-			}
-			// Only one report given. This can be parsed on its own.
-			late = brDA
-		} else if brDB.dt.Equal(brDA.dt) {
-			// In the off chance that the times are exactly equal (it's at the second
-			// granularity), set the report with the longer realtime as the later one.
-			if brDB.bt.GetTotalRealtimeMsec() > brDA.bt.GetTotalRealtimeMsec() {
-				earl, late = brDA, brDB
-			} else {
-				earl, late = brDB, brDA
-			}
-		} else if brDB.dt.Before(brDA.dt) {
-			earl, late = brDB, brDA
-		} else {
-			earl, late = brDA, brDB
-		}
 
-		if diff {
-			log.Printf("Trace started diffing files.")
-		} else {
-			log.Printf("Trace started analyzing %q file.", brDA.fileName)
-		}
+		late = brDA
+		log.Printf("Trace started analyzing %q file.", brDA.fileName)
 
 		// Generate the Historian plot and Volta parsing simultaneously.
 		historianCh := make(chan historianData)
@@ -725,21 +679,8 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 
 			pkgsL, pkgErrs := packageutils.ExtractAppsFromBugReport(late.contents)
 			errs = append(errs, pkgErrs...)
-			checkinECh := make(chan checkinData)
 			checkinLCh := make(chan checkinData)
 			go doCheckin(checkinLCh, late.meta, bsL, pkgsL)
-			if diff {
-				// Calculate batterystats for the earlier report.
-				bsE := bugreportutils.ExtractBatterystatsCheckin(earl.contents)
-				if strings.Contains(bsE, "Exception occurred while dumping") {
-					ce = "Exception found in battery dump."
-					errs = append(errs, errors.New("exception found in battery dump"))
-				}
-				pkgsE, pkgErrs := packageutils.ExtractAppsFromBugReport(earl.contents)
-				errs = append(errs, pkgErrs...)
-				go doCheckin(checkinECh, earl.meta, bsE, pkgsE)
-			}
-
 			// These are only parsed for supported sdk versions, even though they are still
 			// present in unsupported sdk version reports, because the events are rendered
 			// with Historian v2, which is not generated for unsupported sdk versions.
@@ -752,15 +693,8 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 			checkinL = <-checkinLCh
 			errs = append(errs, checkinL.err...)
 			warnings = append(warnings, checkinL.warnings...)
-			if diff {
-				checkinE = <-checkinECh
-				errs = append(errs, checkinE.err...)
-				warnings = append(warnings, checkinE.warnings...)
-			}
-			if checkinL.batterystats == nil || (diff && checkinE.batterystats == nil) {
+			if checkinL.batterystats == nil || (checkinE.batterystats == nil) {
 				ce = "Could not parse aggregated battery stats."
-			} else if diff {
-				bsStats = checkindelta.ComputeDeltaFromSameDevice(checkinL.batterystats, checkinE.batterystats)
 			} else {
 				bsStats = checkinL.batterystats
 			}
@@ -788,9 +722,6 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 
 		warnings = append(warnings, activityManagerOutput.Warnings...)
 		fn := late.fileName
-		if diff {
-			fn = fmt.Sprintf("%s - %s", earl.fileName, late.fileName)
-		}
 		data := presenter.Data(late.meta, fn,
 			summariesOutput.summaries,
 			bsStats, historianOutput.html,
@@ -869,9 +800,6 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 		}
 
 		var note string
-		if diff {
-			note = "Only the System and App Stats tabs show the delta between the first and second bug reports."
-		}
 		pd.responseArr = append(pd.responseArr, uploadResponse{
 			SDKVersion:      data.SDKVersion,
 			HistorianV2Logs: historianV2Logs,
@@ -887,7 +815,7 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 			FileName:        data.Filename,
 			Location:        late.dt.Location().String(),
 			OverflowMs:      summariesOutput.overflowMs,
-			IsDiff:          diff,
+			IsDiff:          false,
 		})
 
 		fileApp, err := os.Create(outputPath + "summary.csv")
@@ -930,11 +858,7 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 
 		pd.data = append(pd.data, data)
 
-		if diff {
-			log.Printf("Trace finished diffing files.")
-		} else {
-			log.Printf("Trace finished analyzing %q file.", brDA.fileName)
-		}
+		log.Printf("Trace finished analyzing %q file.", brDA.fileName)
 	}
 
 	newBrData := func(fName, contents string) (*brData, error) {
@@ -965,11 +889,7 @@ func (pd *ParsedData) ParseBugReport(fnameA, contentsA, fnameB, contentsB, outpu
 	if err != nil {
 		return err
 	}
-	brB, err := newBrData(fnameB, contentsB)
-	if err != nil {
-		return err
-	}
-	doParsing(brA, brB)
+	doParsing(brA)
 
 	return nil
 }
