@@ -26,6 +26,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,7 +189,7 @@ func writeTempFile(contents string) (string, error) {
 // contentsB is an optional second bug report. If it's given and the Android IDs and batterystats
 // checkin start times are the same, a diff of the checkins will be saved, otherwise, they will be
 // saved as separate reports.
-func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
+func ParseBugReport(fnameA, contentsA, outputPath, processName string, duration int) error {
 
 	doActivity := func(ch chan activity.LogsData, contents string, pkgs []*usagepb.PackageInfo) {
 		ch <- activity.Parse(pkgs, contents)
@@ -402,6 +403,8 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 			return
 		}
 
+		var appPower float32
+
 		fmt.Fprintln(fileApp, "Estimated Battery Capacity (mAh),", bsStats.GetSystem().GetBattery().GetEstimatedBatteryCapacityMah())
 		fmt.Fprintln(fileApp, "PowerUse Declared Battery Capacity (mAh),", bsStats.GetSystem().GetPowerUseSummary().GetBatteryCapacityMah())
 		fmt.Fprintln(fileApp, "Device Battery Discharge (mAh),", bsStats.GetSystem().GetBatteryDischarge().GetTotalMah())             //If you follow the history
@@ -422,6 +425,7 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 					fmt.Println(err)
 					return
 				}
+				appPower = appStat.RawStats.GetPowerUseItem().GetComputedPowerMah()
 				break
 			}
 		}
@@ -431,6 +435,42 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 			return
 		}
 		fmt.Println("AppFile written successfully")
+		fmt.Println("----RESULT----")
+		fmt.Println("App cpu usage : ", appPower)
+		format := "02/01/2006 15:04:05"
+		dateInfo := strings.Split(fnameA, "-")
+		seconds := strings.Split(dateInfo[9], ".")
+		var dateInfoInt = []int{}
+		for i := 4; i < len(dateInfo)-1; i++ {
+			j, err := strconv.Atoi(dateInfo[i])
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			dateInfoInt = append(dateInfoInt, j)
+		}
+		secondsInt, err := strconv.Atoi(seconds[0])
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		dateInfoInt = append(dateInfoInt, secondsInt)
+
+		then := time.Date(dateInfoInt[0], time.Month(dateInfoInt[1]), dateInfoInt[2], dateInfoInt[3], dateInfoInt[4], dateInfoInt[5], 0, time.UTC)
+		then = then.Add(time.Second * time.Duration(-30))
+		end := then.Format(format)
+		then = then.Add(time.Minute * time.Duration(-duration))
+		start := then.Format(format)
+		meanPower, err := calculateMeanPower(outputPath+"power_report.csv", start, end)
+		if meanPower == "" {
+			fmt.Println(errors.New("mean power could not be calculated"))
+			return
+		}
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Println("Mean power    : ", meanPower)
 		return
 
 	}
@@ -488,6 +528,10 @@ func analyze(bugReport string, pkgs []*usagepb.PackageInfo) summariesData {
 
 	errs = append(errs, repTotal.Errs...)
 	return summariesData{summariesTotal, bufTotal.String(), bufLevel.String(), repTotal.TimeToDelta, errs, repTotal.OverflowMs}
+}
+
+func calculateMeanPower(powerReportPath, start, end string) (string, error) {
+	return historianutils.RunCommand("python", scriptsPath(scriptsDir, "mean_power.py"), "-f", powerReportPath, "-s", start, "-e", end)
 }
 
 // batteryTime extracts the battery time info from a bug report.

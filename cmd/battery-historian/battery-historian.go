@@ -27,6 +27,7 @@ var (
 	inputFile  = flag.String("input_file", "", "bugreport (zip) to analyze")
 	outputPath = flag.String("output_dir", "", "path for output csv")
 	process    = flag.String("process", "", "Process to monitor")
+	duration   = flag.Int("duration", 1, "Duration of the experiment (min) > 1")
 
 	compiledDir   = flag.String("compiled_dir", "./compiled", "Directory containing compiled js file for Historian v2.")
 	scriptsDir    = flag.String("scripts_dir", "./scripts", "Directory containing Historian and kernel trace Python scripts.")
@@ -64,5 +65,5 @@ func main() {
 		return
 	}
 	fmt.Println(*inputFile)
-	analyzer.ParseBugReport(*inputFile, string(data), *outputPath, *process)
+	analyzer.ParseBugReport(*inputFile, string(data), *outputPath, *process, *duration)
 }
