@@ -18,7 +18,6 @@ package analyzer
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -43,7 +42,6 @@ import (
 	"github.com/google/battery-historian/historianutils"
 	"github.com/google/battery-historian/packageutils"
 	"github.com/google/battery-historian/parseutils"
-	"github.com/google/battery-historian/powermonitor"
 	"github.com/google/battery-historian/presenter"
 	"github.com/google/battery-historian/wearable"
 
@@ -134,14 +132,6 @@ type uploadResponse struct {
 	IsDiff              bool                     `json:"isDiff"`
 }
 
-type uploadResponseCompare struct {
-	UploadResponse  []uploadResponse                 `json:"UploadResponse"`
-	HTML            string                           `json:"html"`
-	UsingComparison bool                             `json:"usingComparison"`
-	CombinedCheckin presenter.CombinedCheckinSummary `json:"combinedCheckin"`
-	SystemUIDecoder activity.SystemUIDecoder         `json:"systemUiDecoder"`
-}
-
 type summariesData struct {
 	summaries       []parseutils.ActivitySummary
 	historianV2CSV  string
@@ -155,13 +145,6 @@ type checkinData struct {
 	batterystats *bspb.BatteryStats
 	warnings     []string
 	err          []error
-}
-
-// UploadedFile is a user uploaded bugreport or its associated file to be analyzed.
-type UploadedFile struct {
-	FileType string
-	FileName string
-	Contents []byte
 }
 
 // ParsedData holds the extracted details from the parsing of each file.
@@ -199,168 +182,12 @@ func (pd *ParsedData) Cleanup() {
 	}
 }
 
-//
-// SendAsJSON creates and sends the HTML output and json response from the ParsedData.
-func (pd *ParsedData) SendAsJSON(w http.ResponseWriter, r *http.Request) {
-	// Append any parsed kernel or power monitor CSVs to the Historian V2 CSV.
-	if err := pd.appendCSVs(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	var buf bytes.Buffer
-	var merge presenter.MultiFileHTMLData
-	if len(pd.data) == numberOfFilesToCompare {
-		merge = presenter.MultiFileData(pd.data)
-		if err := compareTempl.Execute(&buf, merge); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		if pd.brSaveErr != nil {
-			pd.data[0].Error = strings.Join([]string{pd.data[0].Error, pd.brSaveErr.Error()}, "\n")
-		}
-		if pd.kernelSaveErr != nil {
-			pd.data[0].Error = strings.Join([]string{pd.data[0].Error, pd.kernelSaveErr.Error()}, "\n")
-		}
-		if err := resultTempl.Execute(&buf, pd.data[0]); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	unzipped, err := json.Marshal(uploadResponseCompare{
-		UploadResponse:  pd.responseArr,
-		HTML:            buf.String(),
-		UsingComparison: (len(pd.data) == numberOfFilesToCompare),
-		CombinedCheckin: merge.CombinedCheckinData,
-		SystemUIDecoder: activity.Decoder(),
-	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-
-	// Gzip data if it's accepted by the requester.
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		gzipped, err := historianutils.GzipCompress(unzipped)
-		if err == nil {
-			w.Header().Add("Content-Encoding", "gzip")
-			w.Write(gzipped)
-			return
-		}
-		// Send ungzipped data.
-		log.Printf("failed to gzip data: %v", err)
-	}
-	w.Write(unzipped)
-}
-
-// Data returns the data field from ParsedData
-func (pd *ParsedData) Data() []presenter.HTMLData {
-	return pd.data
-}
-
-// appendCSVs adds the parsed kernel and/or power monitor CSVs to the HistorianV2Logs slice.
-func (pd *ParsedData) appendCSVs() error {
-	// Need to append the kernel and power monitor CSV entries to the end of the existing CSV.
-	if pd.kd != nil {
-		if len(pd.data) == 0 {
-			return errors.New("no bug report found for the provided kernel trace file")
-		}
-		if len(pd.data) > 1 {
-			return errors.New("kernel trace file uploaded with more than one bug report")
-		}
-		pd.responseArr[0].HistorianV2Logs = append(pd.responseArr[0].HistorianV2Logs, historianV2Log{Source: kernelTrace, CSV: pd.kd.csv})
-		pd.data[0].Error += historianutils.ErrorsToString(pd.kd.errs)
-	}
-
-	if pd.md != nil {
-		if len(pd.data) == 0 {
-			return errors.New("no bug report found for the provided power monitor file")
-		}
-		if len(pd.data) > 1 {
-			return errors.New("power monitor file uploaded with more than one bug report")
-		}
-		pd.responseArr[0].DisplayPowerMonitor = true
-		// Need to append the power monitor CSV entries to the end of the existing CSV.
-		pd.responseArr[0].HistorianV2Logs = append(pd.responseArr[0].HistorianV2Logs, historianV2Log{Source: powerMonitorLog, CSV: pd.md.csv})
-		pd.data[0].Error += historianutils.ErrorsToString(pd.md.errs)
-	}
-	return nil
-}
-
-// parsePowerMonitorFile processes the power monitor file and stores the result in the ParsedData.
-func (pd *ParsedData) parsePowerMonitorFile(fname, contents string) error {
-	if valid, output, extraErrs := powermonitor.Parse(contents); valid {
-		pd.md = &csvData{output, extraErrs}
-		return nil
-	}
-	return fmt.Errorf("%v: invalid power monitor file", fname)
-}
-
-// templatePath expands a template filename into a full resource path for that template.
-func templatePath(dir, tmpl string) string {
-	if len(dir) == 0 {
-		dir = "./templates"
-	}
-	return path.Join(dir, tmpl)
-}
-
 // scriptsPath expands the script filename into a full resource path for the script.
 func scriptsPath(dir, script string) string {
 	if len(dir) == 0 {
 		dir = "./scripts"
 	}
 	return path.Join(dir, script)
-}
-
-// InitTemplates initializes the HTML templates after google.Init() is called.
-// google.Init() must be called before resources can be accessed.
-func InitTemplates(dir string) {
-	uploadTempl = constructTemplate(dir, []string{
-		"base.html",
-		"body.html",
-		"upload.html",
-		"copy.html",
-	})
-
-	// base.html is intentionally excluded from resultTempl. resultTempl is loaded into the HTML
-	// generated by uploadTempl, so attempting to include base.html here causes some of the
-	// javascript files to be imported twice, which causes things to start blowing up.
-	resultTempl = constructTemplate(dir, []string{
-		"body.html",
-		"summaries.html",
-		"historian_v2.html",
-		"checkin.html",
-		"history.html",
-		"appstats.html",
-		"tables.html",
-		"tablesidebar.html",
-		"histogramstats.html",
-		"powerstats.html",
-	})
-
-	compareTempl = constructTemplate(dir, []string{
-		"body.html",
-		"compare_summaries.html",
-		"compare_checkin.html",
-		"compare_history.html",
-		"historian_v2.html",
-		"tablesidebar.html",
-		"tables.html",
-		"appstats.html",
-		"histogramstats.html",
-	})
-}
-
-// constructTemplate returns a new template constructed from parsing the template
-// definitions from the files with the given base directory and filenames.
-func constructTemplate(dir string, files []string) *template.Template {
-	var paths []string
-	for _, f := range files {
-		paths = append(paths, templatePath(dir, f))
-	}
-	return template.Must(template.ParseFiles(paths...))
 }
 
 // SetScriptsDir sets the directory of the Historian and kernel trace Python scripts.

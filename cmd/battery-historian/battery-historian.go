@@ -31,7 +31,6 @@ var (
 	compiledDir   = flag.String("compiled_dir", "./compiled", "Directory containing compiled js file for Historian v2.")
 	scriptsDir    = flag.String("scripts_dir", "./scripts", "Directory containing Historian and kernel trace Python scripts.")
 	staticDir     = flag.String("static_dir", "./static", "Directory containing static files.")
-	templateDir   = flag.String("template_dir", "./templates", "Directory containing HTML templates.")
 	thirdPartyDir = flag.String("third_party_dir", "./third_party", "Directory containing third party files for Historian v2.")
 
 	// resVersion should be incremented whenever the JS or CSS files are modified.
@@ -65,7 +64,6 @@ func thirdPartyPath() string {
 func main() {
 	flag.Parse()
 
-	analyzer.InitTemplates(*templateDir)
 	analyzer.SetScriptsDir(*scriptsDir)
 	analyzer.SetResVersion(*resVersion)
 	data, err := ioutil.ReadFile(*inputFile)
