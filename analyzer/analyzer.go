@@ -260,20 +260,6 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 		ch <- dmesg.Parse(contents)
 	}
 
-	doHistorian := func(ch chan historianData, fname, contents string) {
-		// Create a temporary file to save the bug report, for the Historian script.
-		brFile, err := writeTempFile(contents)
-		if err != nil {
-			ch <- historianData{err: err}
-			return
-		}
-		// Don't run the Historian script if it could not create temporary file.
-		defer os.Remove(brFile)
-		html, err := generateHistorianPlot(fname, brFile)
-		ch <- historianData{html, err}
-		log.Printf("Trace finished generating Historian plot.")
-	}
-
 	// bs is the batterystats section of the bug report
 	doSummaries := func(ch chan summariesData, bs string, pkgs []*usagepb.PackageInfo) {
 		ch <- analyze(bs, pkgs)
@@ -314,7 +300,6 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 		log.Printf("Trace started analyzing %q file.", brDA.fileName)
 
 		// Generate the Historian plot and Volta parsing simultaneously.
-		historianCh := make(chan historianData)
 		summariesCh := make(chan summariesData)
 		activityManagerCh := make(chan activity.LogsData)
 		broadcastsCh := make(chan csvData)
@@ -326,8 +311,6 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 		var errs []error
 		supV := late.meta.SdkVersion >= minSupportedSDK && (!diff || earl.meta.SdkVersion >= minSupportedSDK)
 
-		// Only need to generate it for the later report.
-		go doHistorian(historianCh, late.fileName, late.contents)
 		if !supV {
 			errs = append(errs, errors.New("unsupported bug report version"))
 		} else {
@@ -355,15 +338,10 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 			errs = append(errs, checkinL.err...)
 			warnings = append(warnings, checkinL.warnings...)
 			if checkinL.batterystats == nil || (checkinE.batterystats == nil) {
-				errs = append(errs, errors.New("Could not parse aggregated battery stats."))
+				errs = append(errs, errors.New("could not parse aggregated battery stats"))
 			} else {
 				bsStats = checkinL.batterystats
 			}
-		}
-
-		historianOutput := <-historianCh
-		if historianOutput.err != nil {
-			historianOutput.html = fmt.Sprintf("Error generating historian plot: %v", historianOutput.err)
 		}
 
 		var summariesOutput summariesData
@@ -385,7 +363,7 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string) error {
 		fn := late.fileName
 		data := presenter.Data(late.meta, fn,
 			summariesOutput.summaries,
-			bsStats, historianOutput.html,
+			bsStats, "historianOutput.html",
 			warnings,
 			errs, summariesOutput.overflowMs > 0, true)
 
@@ -554,11 +532,6 @@ func analyze(bugReport string, pkgs []*usagepb.PackageInfo) summariesData {
 
 	errs = append(errs, repTotal.Errs...)
 	return summariesData{summariesTotal, bufTotal.String(), bufLevel.String(), repTotal.TimeToDelta, errs, repTotal.OverflowMs}
-}
-
-// generateHistorianPlot calls the Historian python script to generate html charts.
-func generateHistorianPlot(reportName, filepath string) (string, error) {
-	return historianutils.RunCommand("python", scriptsPath(scriptsDir, "historian.py"), "-c", "-m", "-r", reportName, filepath)
 }
 
 // batteryTime extracts the battery time info from a bug report.
