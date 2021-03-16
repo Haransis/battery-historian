@@ -59,11 +59,9 @@ func main() {
 	analyzer.SetScriptsDir(*scriptsDir)
 	analyzer.SetResVersion(*resVersion)
 	data, err := ioutil.ReadFile(*inputFile)
-	fmt.Println(*inputFile)
 	if err != nil {
 		fmt.Println("File reading error", err)
 		return
 	}
-	fmt.Println(*inputFile)
 	analyzer.ParseBugReport(*inputFile, string(data), *outputPath, *process, *duration)
 }

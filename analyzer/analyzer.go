@@ -436,7 +436,7 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string, duration 
 		}
 		fmt.Println("AppFile written successfully")
 		fmt.Println("----RESULT----")
-		fmt.Println("App cpu usage : ", appPower)
+		fmt.Println("App energy usage (mAh) : ", appPower)
 		format := "02/01/2006 15:04:05"
 		dateInfo := strings.Split(fnameA, "-")
 		seconds := strings.Split(dateInfo[9], ".")
@@ -470,7 +470,7 @@ func ParseBugReport(fnameA, contentsA, outputPath, processName string, duration 
 			fmt.Println(err)
 			return
 		}
-		fmt.Println("Mean power    : ", meanPower)
+		fmt.Println("Mean power (W)          : ", meanPower)
 		return
 
 	}
